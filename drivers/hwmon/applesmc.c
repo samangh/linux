@@ -84,6 +84,9 @@ static const char *const fan_speed_fmt[] = {
 	"F%dTg",		/* target speed (manual: rw) */
 };
 
+#define BATTERY_CHARGE_LEVEL_MAX "BCLM" /* r-w ui8 */
+#define BATTERY_CHARGE_GREEN_LED_LEVEL "BFCL" /* r-w ui8 */
+
 #define INIT_TIMEOUT_MSECS	5000	/* wait up to 5s for device init ... */
 #define INIT_WAIT_MSECS		50	/* ... in 50ms increments */
 
@@ -979,6 +982,73 @@ static void applesmc_brightness_set(struct led_classdev *led_cdev,
 		dev_dbg(led_cdev->dev, "work was already on the queue.\n");
 }
 
+static ssize_t applesmc_show_battery_charge_level_max(struct device *dev,
+                struct device_attribute *attr, char *sysfsbuf)
+{
+    int ret;
+    u8 buffer[1];
+
+    ret = applesmc_read_key(BATTERY_CHARGE_LEVEL_MAX, buffer, 1);
+    if (ret)
+        return ret;
+
+    return sysfs_emit(sysfsbuf, "%d\n", buffer[0]);
+}
+
+static ssize_t applesmc_show_battery_charge_green_led_level(struct device *dev,
+                struct device_attribute *attr, char *sysfsbuf)
+{
+    int ret;
+    u8 buffer[1];
+
+    ret = applesmc_read_key(BATTERY_CHARGE_GREEN_LED_LEVEL, buffer, 1);
+    if (ret)
+        return ret;
+
+    return sysfs_emit(sysfsbuf, "%d\n", buffer[0]);
+}
+
+static ssize_t applesmc_store_battery_charge_level_max(struct device *dev,
+                    struct device_attribute *attr,
+                    const char *sysfsbuf, size_t count)
+{
+    int ret;
+    u8 level;
+
+    ret = kstrtou8(sysfsbuf, 10, &level);
+    if (ret)
+        return ret;
+
+    if (level < 10 || level > 100)
+        return -EINVAL;		/* must be in 10-100% range */
+
+    ret = applesmc_write_key(BATTERY_CHARGE_LEVEL_MAX, &level, 1);
+    if (ret)
+        return ret;
+    else
+        return count;
+}
+
+static ssize_t applesmc_store_battery_charge_green_led_level(struct device *dev,
+                    struct device_attribute *attr,
+                    const char *sysfsbuf, size_t count)
+{
+    int ret;
+    u8 level;
+
+    ret = kstrtou8(sysfsbuf, 10, &level);
+    if (ret)
+        return ret;
+
+    if (level < 10 || level > 100)
+        return -EINVAL;		/* must be in 10-100% range */
+
+    ret = applesmc_write_key(BATTERY_CHARGE_GREEN_LED_LEVEL, &level, 1);
+    if (ret)
+        return ret;
+    else
+        return count;
+}
 static ssize_t applesmc_key_count_show(struct device *dev,
 				struct device_attribute *attr, char *sysfsbuf)
 {
@@ -1109,6 +1179,12 @@ static struct applesmc_node_group temp_group[] = {
 	{ "temp%d_label", applesmc_show_sensor_label },
 	{ "temp%d_input", applesmc_show_temperature },
 	{ }
+};
+
+static struct applesmc_node_group charger_group[] = {
+    { "battery_charge_level_max", applesmc_show_battery_charge_level_max, applesmc_store_battery_charge_level_max },
+    { "battery_charge_green_led_level", applesmc_show_battery_charge_green_led_level, applesmc_store_battery_charge_green_led_level },
+    { }
 };
 
 /* Module stuff */
@@ -1342,6 +1418,10 @@ static int __init applesmc_init(void)
 	if (ret)
 		goto out_smcreg;
 
+    ret = applesmc_create_nodes(charger_group, 1);
+    if (ret)
+		goto out_charger;
+
 	ret = applesmc_create_nodes(fan_group, smcreg.fan_count);
 	if (ret)
 		goto out_info;
@@ -1370,6 +1450,8 @@ static int __init applesmc_init(void)
 
 	return 0;
 
+out_charger:
+    applesmc_destroy_nodes(charger_group);
 out_light_ledclass:
 	applesmc_release_key_backlight();
 out_light_sysfs:
@@ -1404,6 +1486,7 @@ static void __exit applesmc_exit(void)
 	applesmc_destroy_nodes(temp_group);
 	applesmc_destroy_nodes(fan_group);
 	applesmc_destroy_nodes(info_group);
+    applesmc_destroy_nodes(charger_group);
 	applesmc_destroy_smcreg();
 	platform_device_unregister(pdev);
 	platform_driver_unregister(&applesmc_driver);
